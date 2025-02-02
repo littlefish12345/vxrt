@@ -1,0 +1,121 @@
+#version 430 core
+
+#define OCTREE_SIZE 4681 //16*16*16+8*8*8+4*4*4+2*2*2+1
+
+struct block {
+    uint block_id;
+    uint status;
+};
+
+struct section {
+    uint start_pos_x;
+    uint start_pos_y;
+    uint start_pos_z;
+    block blocks[16][16][16];
+};
+
+struct section_group_map {
+    uint section_map[16][16][16];
+};
+
+struct section_group_update_map {
+    uint update_data[128];
+};
+
+struct octree_node {
+    //unsigned int width: 3; //2^width
+    //unsigned int empty: 1;
+    //unsigned int index: 28;
+    uint metadata;
+};
+
+struct octree {
+    uint start_pos_x; //min coord
+    uint start_pos_y;
+    uint start_pos_z;
+    octree_node nodes[OCTREE_SIZE];
+};
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(std430, binding = 0) buffer section_group_buffer {
+    section section_group[];
+};
+
+layout(std430, binding = 1) buffer section_group_map_buffer {
+    section_group_map group_map_data;
+};
+
+layout(std430, binding = 2) buffer section_group_update_map_buffer {
+    section_group_update_map update_map;
+};
+
+layout(std430, binding = 3) buffer center_octree_buffer {
+    octree center_octree;
+};
+
+layout(std430, binding = 4) buffer section_octree_buffer {
+    octree section_octree[];
+};
+
+uint generate_metadata(uint width, bool empty, uint index) {
+    uint metadata = width;
+    metadata <<= 1;
+    metadata |= empty ? 1 : 0;
+    metadata <<= 28;
+    metadata |= index;
+    return metadata;
+}
+
+uint get_metadata_width(uint metadata) {
+    return (metadata >> 29) & 0x07;
+}
+
+bool get_metadata_empty(uint metadata) {
+    return ((metadata >> 28) & 0x01) == 1 ? true : false;
+}
+
+uint get_metadata_index(uint metadata) {
+    return metadata & 0x0FFFFFFF;
+}
+
+uint get_octree_index(uvec3 local_coord, uint width) {
+    uint index = 0;
+    for (uint i = width; i < 4; ++i) {
+        index += (1<<(3-i)) * (1<<(3-i)) * (1<<(3-i));
+    }
+    return index + (local_coord.x>>width) + (local_coord.y>>width)*(1<<(4-width)) + (local_coord.z>>width)*(1<<(8-(width<<1)));
+}
+
+void main() {
+    bool pass = false, empty;
+    uint section_index = (gl_WorkGroupID.x>>1) + ((gl_WorkGroupID.y>>1)<<4) + ((gl_WorkGroupID.z>>1)<<8);
+    if ((update_map.update_data[section_index>>5] & (1<<(section_index & 0x1F))) == 0) {
+        pass = true;
+    }
+    uvec3 section_pos = gl_GlobalInvocationID - ((gl_WorkGroupID>>1)<<4);
+    if (!pass) {
+        section_octree[section_index].nodes[get_octree_index(section_pos, 0)].metadata = generate_metadata(0, section_group[section_index].blocks[section_pos.x][section_pos.y][section_pos.z].block_id == 0, 114514);
+        if ((section_pos.x & 0x1) != 0 || (section_pos.y & 0x1) != 0 || (section_pos.z & 0x1) != 0) {
+            pass = true;
+        }
+    }
+    for (uint i = 1; i <= 3; ++i) {
+        if (!pass) {
+            barrier();
+            empty = true;
+            empty = empty && get_metadata_empty(section_octree[section_index].nodes[get_octree_index(section_pos, i-1)].metadata);
+            empty = empty && get_metadata_empty(section_octree[section_index].nodes[get_octree_index(uvec3(section_pos.x+(1<<(i-1)), section_pos.yz), i-1)].metadata);
+            empty = empty && get_metadata_empty(section_octree[section_index].nodes[get_octree_index(uvec3(section_pos.x, section_pos.y+(1<<(i-1)), section_pos.z), i-1)].metadata);
+            empty = empty && get_metadata_empty(section_octree[section_index].nodes[get_octree_index(uvec3(section_pos.x+(1<<(i-1)), section_pos.y+(1<<(i-1)), section_pos.z), i-1)].metadata);
+            empty = empty && get_metadata_empty(section_octree[section_index].nodes[get_octree_index(uvec3(section_pos.xy, section_pos.z+(1<<(i-1))), i-1)].metadata);
+            empty = empty && get_metadata_empty(section_octree[section_index].nodes[get_octree_index(uvec3(section_pos.x+(1<<(i-1)), section_pos.y, section_pos.z+(1<<(i-1))), i-1)].metadata);
+            empty = empty && get_metadata_empty(section_octree[section_index].nodes[get_octree_index(uvec3(section_pos.x, section_pos.y+(1<<(i-1)), section_pos.z+(1<<(i-1))), i-1)].metadata);
+            empty = empty && get_metadata_empty(section_octree[section_index].nodes[get_octree_index(uvec3(section_pos.x+(1<<(i-1)), section_pos.y+(1<<(i-1)), section_pos.z+(1<<(i-1))), i-1)].metadata);
+            section_octree[section_index].nodes[get_octree_index(section_pos, i)].metadata = generate_metadata(i, empty, 0);
+            if ((section_pos.x & (1<<i)) != 0 || (section_pos.y & (1<<i)) != 0 || (section_pos.z & (1<<i)) != 0) {
+                pass = true;
+            }
+        }
+    }
+}

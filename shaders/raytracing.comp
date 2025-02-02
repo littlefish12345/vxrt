@@ -1,0 +1,596 @@
+#version 430 core
+
+#define WIDTH 1920
+#define HEIGHT 1080
+
+#define OCTREE_SIZE 4681 //16*16*16+8*8*8+4*4*4+2*2*2+1
+
+struct block {
+    uint block_id;
+    uint status;
+};
+
+struct section {
+    uint start_pos_x;
+    uint start_pos_y;
+    uint start_pos_z;
+    block blocks[16][16][16];
+};
+
+struct octree_node {
+    //unsigned int width: 3; //2^width
+    //unsigned int empty: 1;
+    //unsigned int index: 28;
+    uint metadata;
+};
+
+struct octree {
+    uint start_pos_x; //min coord
+    uint start_pos_y;
+    uint start_pos_z;
+    octree_node nodes[OCTREE_SIZE];
+};
+
+struct section_group_map {
+    uint section_map[16][16][16];
+};
+
+struct camera {
+    vec3 pos;
+    vec3 front;
+    vec3 up;
+    vec3 right;
+    vec3 coord_up;
+    uvec2 width_height;
+    float aspect_ratio;
+    float fov;
+};
+
+struct ray {
+    vec3 pos;
+    vec3 dir;
+};
+
+struct ray_hit_result {
+    bool hit;
+    float dist;
+    uint plain_index;
+    vec3 hit_pos;
+    uvec3 section_pos;
+    uvec3 block_pos;
+};
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(std430, binding = 0) buffer camera_buffer {
+    camera now_camera;
+};
+
+layout(std430, binding = 1) buffer section_group_buffer {
+    section section_group[];
+};
+
+layout(std430, binding = 2) buffer section_group_map_buffer {
+    section_group_map group_map_data;
+};
+
+layout(std430, binding = 3) buffer center_octree_buffer {
+    octree center_octree;
+};
+
+layout(std430, binding = 4) buffer section_octree_buffer {
+    octree section_octree[];
+};
+
+layout(rgba32f, binding = 5) uniform image2D output_image;
+
+uint get_metadata_width(uint metadata) {
+    return (metadata >> 29) & 0x07;
+}
+
+bool get_metadata_empty(uint metadata) {
+    return ((metadata >> 28) & 0x01) == 1 ? true : false;
+}
+
+uint get_metadata_index(uint metadata) {
+    return metadata & 0x0FFFFFFF;
+}
+
+uint get_octree_index(uvec3 local_coord, uint width) {
+    uint index = 0;
+    for (uint i = width; i < 4; ++i) {
+        index += (1<<(3-i)) * (1<<(3-i)) * (1<<(3-i));
+    }
+    return index + (local_coord.x>>width) + (local_coord.y>>width)*(1<<(4-width)) + (local_coord.z>>width)*(1<<(8-(width<<1)));
+}
+
+ray generate_ray() {
+    ray temp_ray;
+    float half_plane_width = tan(radians(now_camera.fov));
+    float half_plane_height = half_plane_width / now_camera.aspect_ratio;
+    vec3 ray_right = half_plane_width * ((gl_GlobalInvocationID.x / float(now_camera.width_height.x-1)) * 2 - 1) * now_camera.right;
+    vec3 ray_up = half_plane_height * ((gl_GlobalInvocationID.y / float(now_camera.width_height.y-1)) * 2 - 1) * now_camera.coord_up;
+    temp_ray.pos = now_camera.pos;
+    temp_ray.dir = normalize(now_camera.front + ray_right + ray_up);
+    return temp_ray;
+}
+
+ray_hit_result ray_hit_node(ray now_ray, vec3 min_coord, uint width) {
+    vec3 max_coord = min_coord + (1<<width);
+    vec3 point_on_plane;
+    float t;
+    bool inbound = false;
+    ray_hit_result result;
+    result.hit = true;
+
+    if (min_coord.x < now_ray.pos.x && now_ray.pos.x < max_coord.x && min_coord.y < now_ray.pos.y && now_ray.pos.y < max_coord.y && min_coord.z < now_ray.pos.z && now_ray.pos.z < max_coord.z) {
+        inbound = true;
+    }
+
+    if (now_ray.dir.x != 0.0f) {
+        if (now_ray.dir.x > 0.0f != inbound) {
+            t = (min_coord.x - now_ray.pos.x) / now_ray.dir.x;
+            result.plain_index = 0;
+        } else {
+            t = (max_coord.x - now_ray.pos.x) / now_ray.dir.x;
+            result.plain_index = 1;
+        }
+        if (t > 0.0f) {
+            point_on_plane = now_ray.pos + t * now_ray.dir;
+            if (min_coord.y < point_on_plane.y && max_coord.y > point_on_plane.y && min_coord.z < point_on_plane.z && max_coord.z > point_on_plane.z) {
+                result.dist = t;
+                result.hit_pos = point_on_plane;
+                return result;
+            }
+        }
+    }
+
+    if (now_ray.dir.y != 0.0f) {
+        if (now_ray.dir.y > 0.0f != inbound) {
+            t = (min_coord.y - now_ray.pos.y) / now_ray.dir.y;
+            result.plain_index = 2;
+        } else {
+            t = (max_coord.y - now_ray.pos.y) / now_ray.dir.y;
+            result.plain_index = 3;
+        }
+        if (t > 0.0f) {
+            point_on_plane = now_ray.pos + t * now_ray.dir;
+            if (min_coord.z < point_on_plane.z && max_coord.z > point_on_plane.z && min_coord.x < point_on_plane.x && max_coord.x > point_on_plane.x) {
+                result.dist = t;
+                result.hit_pos = point_on_plane;
+                return result;
+            }
+        }
+    }
+
+    if (now_ray.dir.z != 0.0f) {
+        if (now_ray.dir.z > 0.0f != inbound) {
+            t = (min_coord.z - now_ray.pos.z) / now_ray.dir.z;
+            result.plain_index = 4;
+        } else {
+            t = (max_coord.z - now_ray.pos.z) / now_ray.dir.z;
+            result.plain_index = 5;
+        }
+        if (t > 0.0f) {
+            point_on_plane = now_ray.pos + t * now_ray.dir;
+            if (min_coord.x < point_on_plane.x && max_coord.x > point_on_plane.x && min_coord.y < point_on_plane.y && max_coord.y > point_on_plane.y) {
+                result.dist = t;
+                result.hit_pos = point_on_plane;
+                return result;
+            }
+        }
+    }
+
+    result.hit = false;
+    return result;
+}
+
+/*
+  6  7
+4  5
+  2  3
+0  1
+
+z^ ^y
+ |/_>x
+*/
+
+uint [8]get_dfs_order(ray now_ray, vec3 min_coord, uint width) {
+    vec3 max_coord = min_coord + (1<<width);
+    vec3 mid_coord = (min_coord + max_coord)/2;
+
+    //corner
+    if ((now_ray.pos.x <= min_coord.x && now_ray.pos.y <= min_coord.y && now_ray.pos.z <= min_coord.z) || (now_ray.pos.x <= mid_coord.x && now_ray.pos.x >= min_coord.x && now_ray.pos.y <= mid_coord.y && now_ray.pos.y >= min_coord.y && now_ray.pos.z <= mid_coord.z && now_ray.pos.z >= min_coord.z)) { //---
+        return uint[8](0, 1, 2, 4, 3, 6, 5, 7);
+    }
+    if ((now_ray.pos.x >= max_coord.x && now_ray.pos.y <= min_coord.y && now_ray.pos.z <= min_coord.z) || (now_ray.pos.x <= max_coord.x && now_ray.pos.x >= mid_coord.x && now_ray.pos.y <= mid_coord.y && now_ray.pos.y >= min_coord.y && now_ray.pos.z <= mid_coord.z && now_ray.pos.z >= min_coord.z)) { //+--
+        return uint[8](1, 0, 3, 5, 4, 7, 2, 6);
+    }
+    if ((now_ray.pos.x <= min_coord.x && now_ray.pos.y >= max_coord.y && now_ray.pos.z <= min_coord.z) || (now_ray.pos.x <= mid_coord.x && now_ray.pos.x >= min_coord.x && now_ray.pos.y <= max_coord.y && now_ray.pos.y >= mid_coord.y && now_ray.pos.z <= mid_coord.z && now_ray.pos.z >= min_coord.z)) { //-+-
+        return uint[8](2, 3, 0, 6, 7, 4, 1, 5);
+    }
+    if ((now_ray.pos.x >= max_coord.x && now_ray.pos.y >= max_coord.y && now_ray.pos.z <= min_coord.z) || (now_ray.pos.x <= max_coord.x && now_ray.pos.x >= mid_coord.x && now_ray.pos.y <= max_coord.y && now_ray.pos.y >= mid_coord.y && now_ray.pos.z <= mid_coord.z && now_ray.pos.z >= min_coord.z)) { //++-
+        return uint[8](3, 2, 1, 7, 6, 5, 0, 4);
+    }
+    if ((now_ray.pos.x <= min_coord.x && now_ray.pos.y <= min_coord.y && now_ray.pos.z >= max_coord.z) || (now_ray.pos.x <= mid_coord.x && now_ray.pos.x >= min_coord.x && now_ray.pos.y <= mid_coord.y && now_ray.pos.y >= min_coord.y && now_ray.pos.z <= max_coord.z && now_ray.pos.z >= mid_coord.z)) { //--+
+        return uint[8](4, 5, 6, 0, 1, 2, 7, 3);
+    }
+    if ((now_ray.pos.x >= max_coord.x && now_ray.pos.y <= min_coord.y && now_ray.pos.z >= max_coord.z) || (now_ray.pos.x <= max_coord.x && now_ray.pos.x >= mid_coord.x && now_ray.pos.y <= mid_coord.y && now_ray.pos.y >= min_coord.y && now_ray.pos.z <= max_coord.z && now_ray.pos.z >= mid_coord.z)) { //+-+
+        return uint[8](5, 4, 7, 1, 0, 3, 6, 2);
+    }
+    if ((now_ray.pos.x <= min_coord.x && now_ray.pos.y >= max_coord.y && now_ray.pos.z >= max_coord.z) || (now_ray.pos.x <= mid_coord.x && now_ray.pos.x >= min_coord.x && now_ray.pos.y <= max_coord.y && now_ray.pos.y >= mid_coord.y && now_ray.pos.z <= max_coord.z && now_ray.pos.z >= mid_coord.z)) { //-++
+        return uint[8](6, 4, 7, 2, 0, 3, 5, 1);
+    }
+    if ((now_ray.pos.x >= max_coord.x && now_ray.pos.y >= max_coord.y && now_ray.pos.z >= max_coord.z) || (now_ray.pos.x <= max_coord.x && now_ray.pos.x >= mid_coord.x && now_ray.pos.y <= max_coord.y && now_ray.pos.y >= mid_coord.y && now_ray.pos.z <= max_coord.z && now_ray.pos.z >= mid_coord.z)) { //+++
+        return uint[8](7, 6, 5, 3, 1, 2, 4, 0);
+    }
+
+    //face
+    if (now_ray.pos.x <= max_coord.x && now_ray.pos.x >= min_coord.x && now_ray.pos.y <= max_coord.y && now_ray.pos.y >= min_coord.y && now_ray.pos.z >= max_coord.z) { //xOy +z
+        if (now_ray.pos.x <= mid_coord.x && now_ray.pos.y <= mid_coord.y) { //--
+            return uint[8](4, 5, 6, 7, 0, 1, 2, 3);
+        }
+        if (now_ray.pos.x >= mid_coord.x && now_ray.pos.y <= mid_coord.y) { //+-
+            return uint[8](5, 4, 7, 6, 1, 0, 3, 2);
+        }
+        if (now_ray.pos.x <= mid_coord.x && now_ray.pos.y >= mid_coord.y) { //-+
+            return uint[8](6, 4, 7, 5, 2, 0, 3, 1);
+        }
+        if (now_ray.pos.x >= mid_coord.x && now_ray.pos.y >= mid_coord.y) { //++
+            return uint[8](7, 6, 5, 4, 3, 2, 1, 0);
+        }
+    }
+    if (now_ray.pos.x <= max_coord.x && now_ray.pos.x >= min_coord.x && now_ray.pos.y <= max_coord.y && now_ray.pos.y >= min_coord.y && now_ray.pos.z <= min_coord.z) { //xOy -z
+        if (now_ray.pos.x <= mid_coord.x && now_ray.pos.y <= mid_coord.y) { //--
+            return uint[8](0, 1, 2, 3, 4, 5, 6, 7);
+        }
+        if (now_ray.pos.x >= mid_coord.x && now_ray.pos.y <= mid_coord.y) { //+-
+            return uint[8](1, 0, 3, 2, 5, 4, 7, 6);
+        }
+        if (now_ray.pos.x <= mid_coord.x && now_ray.pos.y >= mid_coord.y) { //-+
+            return uint[8](2, 0, 3, 1, 6, 4, 7, 5);
+        }
+        if (now_ray.pos.x >= mid_coord.x && now_ray.pos.y >= mid_coord.y) { //++
+            return uint[8](3, 2, 1, 0, 7, 6, 5, 4);
+        }
+    }
+    if (now_ray.pos.x <= max_coord.x && now_ray.pos.x >= min_coord.x && now_ray.pos.z <= max_coord.z && now_ray.pos.z >= min_coord.z && now_ray.pos.y >= max_coord.y) { //xOz +y
+        if (now_ray.pos.x <= mid_coord.x && now_ray.pos.z <= mid_coord.z) { //--
+            return uint[8](2, 3, 6, 7, 0, 1, 4, 5);
+        }
+        if (now_ray.pos.x >= mid_coord.x && now_ray.pos.z <= mid_coord.z) { //+-
+            return uint[8](3, 2, 7, 6, 1, 0, 5, 4);
+        }
+        if (now_ray.pos.x <= mid_coord.x && now_ray.pos.z >= mid_coord.z) { //-+
+            return uint[8](6, 2, 7, 3, 4, 0, 5, 1);
+        }
+        if (now_ray.pos.x >= mid_coord.x && now_ray.pos.z >= mid_coord.z) { //++
+            return uint[8](7, 6, 3, 2, 5, 4, 1, 0);
+        }
+    }
+    if (now_ray.pos.x <= max_coord.x && now_ray.pos.x >= min_coord.x && now_ray.pos.z <= max_coord.z && now_ray.pos.z >= min_coord.z && now_ray.pos.y <= min_coord.y) { //xOz -y
+        if (now_ray.pos.x <= mid_coord.x && now_ray.pos.z <= mid_coord.z) { //--
+            return uint[8](0, 1, 4, 5, 2, 3, 6, 7);
+        }
+        if (now_ray.pos.x >= mid_coord.x && now_ray.pos.z <= mid_coord.z) { //+-
+            return uint[8](1, 0, 5, 4, 3, 2, 7, 6);
+        }
+        if (now_ray.pos.x <= mid_coord.x && now_ray.pos.z >= mid_coord.z) { //-+
+            return uint[8](4, 0, 5, 1, 6, 2, 7, 3);
+        }
+        if (now_ray.pos.x >= mid_coord.x && now_ray.pos.z >= mid_coord.z) { //++
+            return uint[8](5, 4, 1, 0, 7, 6, 3, 2);
+        }
+    }
+    if (now_ray.pos.y <= max_coord.y && now_ray.pos.y >= min_coord.y && now_ray.pos.z <= max_coord.z && now_ray.pos.z >= min_coord.z && now_ray.pos.x >= max_coord.x) { //yOz +x
+        if (now_ray.pos.y <= mid_coord.y && now_ray.pos.z <= mid_coord.z) { //--
+            return uint[8](1, 3, 5, 7, 0, 2, 4, 6);
+        }
+        if (now_ray.pos.y >= mid_coord.y && now_ray.pos.z <= mid_coord.z) { //+-
+            return uint[8](3, 1, 7, 5, 2, 0, 6, 4);
+        }
+        if (now_ray.pos.y <= mid_coord.y && now_ray.pos.z >= mid_coord.z) { //-+
+            return uint[8](5, 1, 7, 3, 4, 0, 6, 2);
+        }
+        if (now_ray.pos.y >= mid_coord.y && now_ray.pos.z >= mid_coord.z) { //++
+            return uint[8](7, 5, 3, 1, 6, 4, 2, 0);
+        }
+    }
+    if (now_ray.pos.y <= max_coord.y && now_ray.pos.y >= min_coord.y && now_ray.pos.z <= max_coord.z && now_ray.pos.z >= min_coord.z && now_ray.pos.x <= min_coord.x) { //yOz -x
+        if (now_ray.pos.y <= mid_coord.y && now_ray.pos.z <= mid_coord.z) { //--
+            return uint[8](0, 2, 4, 6, 1, 3, 5, 7);
+        }
+        if (now_ray.pos.y >= mid_coord.y && now_ray.pos.z <= mid_coord.z) { //+-
+            return uint[8](2, 0, 6, 4, 3, 1, 7, 5);
+        }
+        if (now_ray.pos.y <= mid_coord.y && now_ray.pos.z >= mid_coord.z) { //-+
+            return uint[8](4, 0, 6, 2, 5, 1, 7, 3);
+        }
+        if (now_ray.pos.y >= mid_coord.y && now_ray.pos.z >= mid_coord.z) { //++
+            return uint[8](6, 4, 2, 0, 7, 5, 3, 1);
+        }
+    }
+
+    //edge
+    if (now_ray.pos.x <= max_coord.x && now_ray.pos.x >= min_coord.x && now_ray.pos.y <= min_coord.y && now_ray.pos.z <= min_coord.z) { //0--
+        if (now_ray.pos.x <= mid_coord.x) { //-
+            return uint[8](0, 1, 4, 5, 2, 3, 6, 7);
+        } else { //+
+            return uint[8](1, 0, 5, 4, 3, 2, 7, 6);
+        }
+    }
+    if (now_ray.pos.x <= max_coord.x && now_ray.pos.x >= min_coord.x && now_ray.pos.y >= max_coord.y && now_ray.pos.z <= min_coord.z) { //0+-
+        if (now_ray.pos.x <= mid_coord.x) { //-
+            return uint[8](2, 3, 0, 1, 6, 7, 4, 5);
+        } else { //+
+            return uint[8](3, 2, 1, 0, 7, 6, 5, 4);
+        }
+    }
+    if (now_ray.pos.x <= max_coord.x && now_ray.pos.x >= min_coord.x && now_ray.pos.y <= min_coord.y && now_ray.pos.z >= max_coord.z) { //0-+
+        if (now_ray.pos.x <= mid_coord.x) { //-
+            return uint[8](4, 5, 0, 1, 6, 7, 2, 3);
+        } else { //+
+            return uint[8](5, 4, 1, 0, 7, 6, 3, 2);
+        }
+    }
+    if (now_ray.pos.x <= max_coord.x && now_ray.pos.x >= min_coord.x && now_ray.pos.y >= max_coord.y && now_ray.pos.z >= max_coord.z) { //0++
+        if (now_ray.pos.x <= mid_coord.x) { //-
+            return uint[8](6, 7, 4, 5, 2, 3, 0, 1);
+        } else { //+
+            return uint[8](7, 6, 5, 4, 3, 2, 1, 0);
+        }
+    }
+    if (now_ray.pos.y <= max_coord.y && now_ray.pos.y >= min_coord.y && now_ray.pos.x <= min_coord.x && now_ray.pos.z <= min_coord.z) { //-0-
+        if (now_ray.pos.y <= mid_coord.y) { //-
+            return uint[8](0, 2, 1, 3, 4, 6, 5, 7);
+        } else { //+
+            return uint[8](2, 0, 3, 1, 6, 4, 7, 5);
+        }
+    }
+    if (now_ray.pos.y <= max_coord.y && now_ray.pos.y >= min_coord.y && now_ray.pos.x >= max_coord.x && now_ray.pos.z <= min_coord.z) { //+0-
+        if (now_ray.pos.y <= mid_coord.y) { //-
+            return uint[8](1, 3, 5, 7, 0, 2, 4, 6);
+        } else { //+
+            return uint[8](3, 1, 7, 5, 2, 0, 6, 4);
+        }
+    }
+    if (now_ray.pos.y <= max_coord.y && now_ray.pos.y >= min_coord.y && now_ray.pos.x <= min_coord.x && now_ray.pos.z >= max_coord.z) { //-0+
+        if (now_ray.pos.y <= mid_coord.y) { //-
+            return uint[8](4, 6, 0, 2, 5, 7, 1, 3);
+        } else { //+
+            return uint[8](6, 4, 2, 0, 7, 5, 3, 1);
+        }
+    }
+    if (now_ray.pos.y <= max_coord.y && now_ray.pos.y >= min_coord.y && now_ray.pos.x >= max_coord.x && now_ray.pos.z >= max_coord.z) { //+0+
+        if (now_ray.pos.y <= mid_coord.y) { //-
+            return uint[8](5, 7, 1, 3, 4, 6, 0, 2);
+        } else { //+
+            return uint[8](7, 5, 3, 1, 6, 4, 2, 0);
+        }
+    }
+    if (now_ray.pos.z <= max_coord.z && now_ray.pos.z >= min_coord.z && now_ray.pos.x <= min_coord.x && now_ray.pos.y <= min_coord.y) { //--0
+        if (now_ray.pos.z <= mid_coord.z) { //-
+            return uint[8](0, 4, 2, 6, 1, 5, 3, 7);
+        } else { //+
+            return uint[8](4, 0, 6, 2, 5, 1, 7, 3);
+        }
+    }
+    if (now_ray.pos.z <= max_coord.z && now_ray.pos.z >= min_coord.z && now_ray.pos.x >= max_coord.x && now_ray.pos.y <= min_coord.y) { //+-0
+        if (now_ray.pos.z <= mid_coord.z) { //-
+            return uint[8](1, 5, 3, 7, 0, 4, 2, 6);
+        } else { //+
+            return uint[8](5, 1, 7, 3, 4, 0, 6, 2);
+        }
+    }
+    if (now_ray.pos.z <= max_coord.z && now_ray.pos.z >= min_coord.z && now_ray.pos.x <= min_coord.x && now_ray.pos.y >= max_coord.y) { //-+0
+        if (now_ray.pos.z <= mid_coord.z) { //-
+            return uint[8](2, 6, 0, 4, 3, 7, 1, 5);
+        } else { //+
+            return uint[8](6, 2, 4, 0, 7, 3, 5, 1);
+        }
+    }
+    if (now_ray.pos.z <= max_coord.z && now_ray.pos.z >= min_coord.z && now_ray.pos.x >= max_coord.x && now_ray.pos.y >= max_coord.y) { //++0
+        if (now_ray.pos.z <= mid_coord.z) { //-
+            return uint[8](3, 7, 1, 5, 2, 6, 0, 4);
+        } else { //+
+            return uint[8](7, 3, 5, 1, 6, 2, 4, 0);
+        }
+    }
+}
+
+uint get_child_node_index(uvec3 coord, uint width, uint index) {
+    switch (index) {
+        case 0:
+            return get_octree_index(coord, width - 1);
+        case 1:
+            return get_octree_index(uvec3(coord.x + (1<<(width - 1)), coord.y, coord.z), width - 1);
+        case 2:
+            return get_octree_index(uvec3(coord.x, coord.y + (1<<(width - 1)), coord.z), width - 1);
+        case 3:
+            return get_octree_index(uvec3(coord.x + (1<<(width - 1)), coord.y + (1<<(width - 1)), coord.z), width - 1);
+        case 4:
+            return get_octree_index(uvec3(coord.x, coord.y, coord.z + (1<<(width - 1))), width - 1);
+        case 5:
+            return get_octree_index(uvec3(coord.x + (1<<(width - 1)), coord.y, coord.z + (1<<(width - 1))), width - 1);
+        case 6:
+            return get_octree_index(uvec3(coord.x, coord.y + (1<<(width - 1)), coord.z + (1<<(width - 1))), width - 1);
+        case 7:
+            return get_octree_index(uvec3(coord.x + (1<<(width - 1)), coord.y + (1<<(width - 1)), coord.z + (1<<(width - 1))), width - 1);
+    }
+}
+
+uvec3 get_child_node_coord(uvec3 coord, uint width, uint index) {
+    switch (index) {
+        case 0:
+            return coord;
+        case 1:
+            return uvec3(coord.x + (1<<(width - 1)), coord.y, coord.z);
+        case 2:
+            return uvec3(coord.x, coord.y + (1<<(width - 1)), coord.z);
+        case 3:
+            return uvec3(coord.x + (1<<(width - 1)), coord.y + (1<<(width - 1)), coord.z);
+        case 4:
+            return uvec3(coord.x, coord.y, coord.z + (1<<(width - 1)));
+        case 5:
+            return uvec3(coord.x + (1<<(width - 1)), coord.y, coord.z + (1<<(width - 1)));
+        case 6:
+            return uvec3(coord.x, coord.y + (1<<(width - 1)), coord.z + (1<<(width - 1)));
+        case 7:
+            return uvec3(coord.x + (1<<(width - 1)), coord.y + (1<<(width - 1)), coord.z + (1<<(width - 1)));
+    }
+}
+
+ray_hit_result ray_hit_section_octree(ray now_ray, uint index) {
+    uint dfs_order_stack[4][8];
+    uvec3 octree_pos_stack[4];
+    int dfs_index_stack[4];
+    int now_stack_top = 0;
+    uvec3 pos_offset = uvec3(section_octree[index].start_pos_x, section_octree[index].start_pos_y, section_octree[index].start_pos_z);
+    ray_hit_result result;
+
+    if (get_metadata_empty(section_octree[index].nodes[0].metadata)) {
+        result.hit = false;
+        return result;
+    }
+    octree_pos_stack[0] = uvec3(0, 0, 0);
+    result = ray_hit_node(now_ray, pos_offset, 4);
+    if (!result.hit) {
+        result.hit = false;
+        return result;
+    }
+    dfs_order_stack[0] = get_dfs_order(now_ray, octree_pos_stack[0], 4);
+    dfs_index_stack[0] = 0;
+
+    uint now_node_index;
+    uvec3 now_node_pos;
+    bool find;
+
+    while (now_stack_top >= 0) {
+        find = false;
+        for (int i = dfs_index_stack[now_stack_top]; i < 8; ++i) {
+            now_node_index = get_child_node_index(octree_pos_stack[now_stack_top], 4-now_stack_top, dfs_order_stack[now_stack_top][i]);
+            if (get_metadata_empty(section_octree[index].nodes[now_node_index].metadata)) {
+                continue;
+            }
+            now_node_pos = get_child_node_coord(octree_pos_stack[now_stack_top], 4-now_stack_top, dfs_order_stack[now_stack_top][i]);
+            result = ray_hit_node(now_ray, now_node_pos+pos_offset, 3-now_stack_top);
+            if (result.hit) {
+                if (now_stack_top == 3) {
+                    result.block_pos = now_node_pos;
+                    return result;
+                }
+                dfs_index_stack[now_stack_top] = i + 1;
+                ++now_stack_top;
+                octree_pos_stack[now_stack_top] = now_node_pos;
+                dfs_order_stack[now_stack_top] = get_dfs_order(now_ray, now_node_pos+pos_offset, 4-now_stack_top);
+                dfs_index_stack[now_stack_top] = 0;
+                find = true;
+                break;
+            }
+        }
+        if (!find) {
+            --now_stack_top;
+        }
+    }
+    result.hit = false;
+    return result;
+}
+
+ray_hit_result ray_hit_center_octree(ray now_ray) {
+    uint dfs_order_stack[4][8];
+    uvec3 octree_pos_stack[4];
+    int dfs_index_stack[4];
+    int now_stack_top = 0;
+    uvec3 pos_offset = uvec3(center_octree.start_pos_x, center_octree.start_pos_y, center_octree.start_pos_z);
+    ray_hit_result result;
+
+    if (get_metadata_empty(center_octree.nodes[0].metadata)) {
+        result.hit = false;
+        return result;
+    }
+    octree_pos_stack[0] = uvec3(0, 0, 0);
+    result = ray_hit_node(now_ray, pos_offset, 8);
+    if (!result.hit) {
+        result.hit = false;
+        return result;
+    }
+    dfs_order_stack[0] = get_dfs_order(now_ray, pos_offset, 8);
+    dfs_index_stack[0] = 0;
+
+    uint now_node_index;
+    uvec3 now_node_pos;
+    bool find;
+
+    while (now_stack_top >= 0) {
+        find = false;
+        for (int i = dfs_index_stack[now_stack_top]; i < 8; ++i) {
+            now_node_index = get_child_node_index(octree_pos_stack[now_stack_top], 4-now_stack_top, dfs_order_stack[now_stack_top][i]);
+            if (get_metadata_empty(center_octree.nodes[now_node_index].metadata)) {
+                continue;
+            }
+            now_node_pos = get_child_node_coord(octree_pos_stack[now_stack_top], 4-now_stack_top, dfs_order_stack[now_stack_top][i]);
+            result = ray_hit_node(now_ray, (now_node_pos<<4)+pos_offset, 7-now_stack_top);
+            if (result.hit) {
+                if (now_stack_top == 3) {
+                    result = ray_hit_section_octree(now_ray, group_map_data.section_map[now_node_pos.x][now_node_pos.y][now_node_pos.z]);
+                    if (result.hit) {
+                        result.section_pos = now_node_pos;
+                        return result;
+                    } else {
+                        continue;
+                    }
+                }
+                dfs_index_stack[now_stack_top] = i + 1;
+                ++now_stack_top;
+                octree_pos_stack[now_stack_top] = now_node_pos;
+                dfs_order_stack[now_stack_top] = get_dfs_order(now_ray, (now_node_pos<<4)+pos_offset, 8-now_stack_top);
+                dfs_index_stack[now_stack_top] = 0;
+                find = true;
+                break;
+            }
+        }
+        if (!find) {
+            --now_stack_top;
+        }
+    }
+    result.hit = false;
+    return result;
+}
+
+
+void main() {
+    ivec2 pixel_xy = ivec2(gl_GlobalInvocationID.xy);
+    uint pixel_num = gl_GlobalInvocationID.y*WIDTH + gl_GlobalInvocationID.x;
+    ray now_ray = generate_ray();
+    ray_hit_result result = ray_hit_center_octree(now_ray);
+    //ray_hit_result result = ray_hit_section_octree(now_ray, 0);
+    vec3 color;
+    if (result.hit) {
+        switch (result.plain_index) {
+            case 0:
+                color = vec3(1.0f, 0.0f, 0.0f);
+                break;
+            case 1:
+                color = vec3(0.0f, 1.0f, 0.0f);
+                break;
+            case 2:
+                color = vec3(0.0f, 0.0f, 1.0f);
+                break;
+            case 3:
+                color = vec3(1.0f, 1.0f, 0.0f);
+                break;
+            case 4:
+                color = vec3(1.0f, 0.0f, 1.0f);
+                break;
+            case 5:
+                color = vec3(0.0f, 1.0f, 1.0f);
+                break;
+        }
+        //imageStore(output_image, pixel_xy, vec4(section_group[group_map_data.section_map[result.section_pos.x][result.section_pos.y][result.section_pos.z]].blocks[result.block_pos.x][result.block_pos.y][result.block_pos.z].status == 1 ? vec3(0, 1, 0) : vec3(0, 0, 1), 1.0f));
+        imageStore(output_image, pixel_xy, vec4(color, 1.0f));
+    } else {
+        imageStore(output_image, pixel_xy, vec4(0.0f, 0.0f, 0.0f, 1.0f));
+    }
+    //imageStore(output_image, pixel_xy, vec4(get_metadata_empty(center_octree.nodes[8].metadata) ? vec3(0, 0, 0) : vec3(0, 1, 0), 1.0f));
+    //imageStore(output_image, pixel_xy, vec4(section_group[group_map_data.section_map[15][15][15]].blocks[15][15][15].status == 114514 ? vec3(0, 0, 0) : vec3(0, 1, 0), 1.0f));
+}
