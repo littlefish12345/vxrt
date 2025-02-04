@@ -30,7 +30,7 @@ void process_keyboard(GLFWwindow *window, float delta_time) {
     if(glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
         up = true;
     }
-    if(glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) {
+    if(glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
         down = true;
     }
 

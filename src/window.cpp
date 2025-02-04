@@ -17,7 +17,7 @@ void window_init() {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
 
-    global_window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE, NULL, NULL);
+    global_window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, (std::string(WINDOW_TITLE) + " compling shaders...").c_str(), NULL, NULL);
     if (global_window == NULL) {
         std::cout << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
@@ -46,6 +46,10 @@ void window_mainloop() {
     double new_time, delta_time;
     double pass_time = 0.0f;
     unsigned int frame_count = 0;
+    unsigned int fixed_frame_count = 1;
+    std::random_device device;
+    std::mt19937 generator(device());
+    std::uniform_int_distribution<> distribution(65536, 131072);
     while(!glfwWindowShouldClose(global_window)) {
         new_time = glfwGetTime();
         delta_time = new_time - now_time;
@@ -57,6 +61,12 @@ void window_mainloop() {
             pass_time = 0.0f;
         }
         process_keyboard(global_window, delta_time);
+        camera_set_seed(distribution(generator));
+        if (camera_get_moved()) {
+            fixed_frame_count = 1;
+        }
+        camera_set_fixed_frame_count(fixed_frame_count);
+        camera_reset_moved();
         camera_update();
 
         glClearColor(0.2235f, 0.7725f, 0.7333f, 1.0f);
@@ -67,6 +77,7 @@ void window_mainloop() {
         glfwSwapBuffers(global_window);
         glfwPollEvents();
         ++frame_count;
+        ++fixed_frame_count;
     }
 }
 

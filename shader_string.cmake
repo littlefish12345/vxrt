@@ -1,8 +1,8 @@
 file(REMOVE_RECURSE "${PROJECT_SOURCE_DIR}/shaders/include")
-file(GLOB OPENGL_VOXEL_RT_ALL_SHADER "${PROJECT_SOURCE_DIR}/shaders/*")
+file(GLOB VXRT_ALL_SHADER "${PROJECT_SOURCE_DIR}/shaders/*")
 file(MAKE_DIRECTORY "${PROJECT_SOURCE_DIR}/shaders/include")
 
-foreach(shader_path IN LISTS OPENGL_VOXEL_RT_ALL_SHADER)
+foreach(shader_path IN LISTS VXRT_ALL_SHADER)
     file(READ ${shader_path} shader_source)
     get_filename_component(shader_filename ${shader_path} NAME)
     file(TOUCH "${PROJECT_SOURCE_DIR}/shaders/include/${shader_filename}")

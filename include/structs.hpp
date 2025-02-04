@@ -7,6 +7,15 @@ struct block {
     unsigned int status;
 };
 
+struct block_info {
+    glm::vec3 attr; //roughness k glow
+    float _pad1;
+    glm::vec3 diffuse_color;
+    float _pad2;
+    glm::vec3 reflect_color;
+    float _pad3;
+};
+
 struct section {
     unsigned int start_pos_x;
     unsigned int start_pos_y;
@@ -50,4 +59,6 @@ struct camera {
     glm::uvec2 width_height;
     float aspect_ratio;
     float fov;
+    unsigned int seed;
+    unsigned int fixed_frame_count;
 };

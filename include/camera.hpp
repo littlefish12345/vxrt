@@ -13,3 +13,7 @@ void camera_move_right(float dist);
 void camera_move_up(float dist);
 void camera_move_down(float dist);
 void camera_set_front(glm::vec3 front);
+void camera_set_seed(unsigned int seed);
+void camera_set_fixed_frame_count(unsigned int fixed_frame_count);
+bool camera_get_moved();
+void camera_reset_moved();

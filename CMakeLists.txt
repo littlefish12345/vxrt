@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.15)
 
 project(vxrt)
+set(CMAKE_EXE_LINKER_FLAGS "-static")
 set(CMAKE_CXX_STANDARD 11)
 
 find_package(OpenGL REQUIRED)

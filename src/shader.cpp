@@ -21,13 +21,15 @@ GLuint display_vertex_shader;
 GLuint display_fragment_shader;
 GLuint display_program;
 
-GLuint camera_ssbo, section_group_ssbo, section_group_map_ssbo, section_group_update_map_ssbo, center_octree_ssbo, section_octree_ssbo, output_image;
+GLuint camera_ssbo, section_group_ssbo, section_group_map_ssbo, section_group_update_map_ssbo, center_octree_ssbo, section_octree_ssbo, block_info_list_ssbo, output_image;
 GLuint vao, vbo, ebo;
 
 section_group_update_map update_map;
 
 section test_section_group[4096];
 section_group_map test_section_group_map;
+
+block_info block_info_list[BLOCK_NUM];
 
 float display_vertices[] = {
     -1.0f, 1.0f, 0.0f, 1.0f,
@@ -118,6 +120,37 @@ void camera_update() {
 }
 
 void shader_create() {
+    block_info_list[1].attr.x = 1; //white rough block
+    block_info_list[1].attr.y = 1;
+    block_info_list[1].attr.z = 0;
+    block_info_list[1].diffuse_color = glm::vec3(1, 1, 1);
+    block_info_list[1].reflect_color = glm::vec3(0, 0, 0);
+    block_info_list[2].attr.x = 1; //red rough block
+    block_info_list[2].attr.y = 1;
+    block_info_list[2].attr.z = 0;
+    block_info_list[2].diffuse_color = glm::vec3(1, 0, 0);
+    block_info_list[2].reflect_color = glm::vec3(0, 0, 0);
+    block_info_list[3].attr.x = 1; //green rough block
+    block_info_list[3].attr.y = 1;
+    block_info_list[3].attr.z = 0;
+    block_info_list[3].diffuse_color = glm::vec3(0, 1, 0);
+    block_info_list[3].reflect_color = glm::vec3(0, 0, 0);
+    block_info_list[4].attr.x = 0.3; //shiny copper block
+    block_info_list[4].attr.y = 0;
+    block_info_list[4].attr.z = 0;
+    block_info_list[4].diffuse_color = glm::vec3(0.98, 0.82, 0.76);
+    block_info_list[4].reflect_color = glm::vec3(0.98, 0.82, 0.76);
+    block_info_list[5].attr.x = 0.1; //mirror block
+    block_info_list[5].attr.y = 0;
+    block_info_list[5].attr.z = 0;
+    block_info_list[5].diffuse_color = glm::vec3(0, 0, 0);
+    block_info_list[5].reflect_color = glm::vec3(0.31, 0.31, 0.31);
+    block_info_list[6].attr.x = 1; //white light block
+    block_info_list[6].attr.y = 1;
+    block_info_list[6].attr.z = 1;
+    block_info_list[6].diffuse_color = glm::vec3(1, 1, 1);
+    block_info_list[6].reflect_color = glm::vec3(0, 0, 0);
+
     for (int u = 0; u < 16; ++u) {
         for (int v = 0; v < 16; ++v) {
             for (int w = 0; w < 16; ++w) {
@@ -136,8 +169,39 @@ void shader_create() {
             }
         }
     }
-    test_section_group[test_section_group_map.section_map[15][15][15]].blocks[15][15][15].block_id = 1;
+    for (int x = 0; x < 7; ++x) {
+        for (int y = 0; y < 7; ++y) {
+            test_section_group[test_section_group_map.section_map[0][0][0]].blocks[x][y][0].block_id = 1;
+        }
+    }
+    for (int x = 0; x < 7; ++x) {
+        for (int y = 0; y < 7; ++y) {
+            test_section_group[test_section_group_map.section_map[0][0][0]].blocks[x][y][7].block_id = 6;
+        }
+    }
+    for (int x = 0; x < 7; ++x) {
+        for (int z = 0; z < 7; ++z) {
+            test_section_group[test_section_group_map.section_map[0][0][0]].blocks[x][0][z].block_id = 3;
+        }
+    }
+    for (int x = 0; x < 7; ++x) {
+        for (int z = 0; z < 7; ++z) {
+            test_section_group[test_section_group_map.section_map[0][0][0]].blocks[x][7][z].block_id = 4;
+        }
+    }
+    for (int y = 0; y < 7; ++y) {
+        for (int z = 0; z < 7; ++z) {
+            test_section_group[test_section_group_map.section_map[0][0][0]].blocks[0][y][z].block_id = 1;
+        }
+    }
+    for (int y = 0; y < 7; ++y) {
+        for (int z = 0; z < 7; ++z) {
+            test_section_group[test_section_group_map.section_map[0][0][0]].blocks[7][y][z].block_id = 1;
+        }
+    }
 
+/*
+    test_section_group[test_section_group_map.section_map[15][15][15]].blocks[15][15][15].block_id = 1;
 
     for (int x = 0; x < 2; ++x) {
         for (int y = 0; y < 2; ++y) {
@@ -146,7 +210,7 @@ void shader_create() {
                 test_section_group[test_section_group_map.section_map[x][y][z]].blocks[2][0][0].block_id = 1;
                 test_section_group[test_section_group_map.section_map[x][y][z]].blocks[0][2][0].block_id = 1;
                 test_section_group[test_section_group_map.section_map[x][y][z]].blocks[2][2][0].block_id = 1;
-                test_section_group[test_section_group_map.section_map[x][y][z]].blocks[1][1][1].block_id = 1;
+                test_section_group[test_section_group_map.section_map[x][y][z]].blocks[1][1][1].block_id = 6;
                 test_section_group[test_section_group_map.section_map[x][y][z]].blocks[0][0][2].block_id = 1;
                 test_section_group[test_section_group_map.section_map[x][y][z]].blocks[2][0][2].block_id = 1;
                 test_section_group[test_section_group_map.section_map[x][y][z]].blocks[0][2][2].block_id = 1;
@@ -154,7 +218,7 @@ void shader_create() {
             }
         }
     }
-
+*/
 /*
     test_section_group[test_section_group_map.section_map[0][0][0]].blocks[0][0][0].block_id = 1;
     test_section_group[test_section_group_map.section_map[0][0][0]].blocks[1][0][0].block_id = 1;
@@ -171,11 +235,14 @@ void shader_create() {
     glGenBuffers(1, &section_group_update_map_ssbo);
     glGenBuffers(1, &center_octree_ssbo);
     glGenBuffers(1, &section_octree_ssbo);
+    glGenBuffers(1, &block_info_list_ssbo);
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, center_octree_ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(octree), NULL, GL_DYNAMIC_COPY);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, section_octree_ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(octree)*4096, NULL, GL_DYNAMIC_COPY);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, block_info_list_ssbo);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(block_info)*BLOCK_NUM, block_info_list, GL_DYNAMIC_COPY);
     
     glGenTextures(1, &output_image);
     glBindTexture(GL_TEXTURE_2D, output_image);
@@ -289,9 +356,10 @@ void shader_run() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, camera_ssbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, section_group_ssbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, section_group_map_ssbo);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, center_octree_ssbo);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, section_octree_ssbo);
-    glBindImageTexture(5, output_image, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, block_info_list_ssbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, center_octree_ssbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, section_octree_ssbo);
+    glBindImageTexture(6, output_image, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32F);
     glDispatchCompute(WINDOW_WIDTH/8, WINDOW_HEIGHT/8, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
