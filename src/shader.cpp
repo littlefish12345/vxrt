@@ -3,6 +3,8 @@
 #include "structs.hpp"
 #include "shader_source.hpp"
 #include "camera.hpp"
+#include "section.hpp"
+#include "block.hpp"
 
 #include <vector>
 
@@ -25,11 +27,6 @@ GLuint camera_ssbo, section_group_ssbo, section_group_map_ssbo, section_group_up
 GLuint vao, vbo, ebo;
 
 section_group_update_map update_map;
-
-section test_section_group[4096];
-section_group_map test_section_group_map;
-
-block_info block_info_list[BLOCK_NUM];
 
 float display_vertices[] = {
     -1.0f, 1.0f, 0.0f, 1.0f,
@@ -120,115 +117,6 @@ void camera_update() {
 }
 
 void shader_create() {
-    block_info_list[1].attr.x = 1; //white rough block
-    block_info_list[1].attr.y = 1;
-    block_info_list[1].attr.z = 0;
-    block_info_list[1].diffuse_color = glm::vec3(1, 1, 1);
-    block_info_list[1].reflect_color = glm::vec3(0, 0, 0);
-    block_info_list[2].attr.x = 1; //red rough block
-    block_info_list[2].attr.y = 1;
-    block_info_list[2].attr.z = 0;
-    block_info_list[2].diffuse_color = glm::vec3(1, 0, 0);
-    block_info_list[2].reflect_color = glm::vec3(0, 0, 0);
-    block_info_list[3].attr.x = 1; //green rough block
-    block_info_list[3].attr.y = 1;
-    block_info_list[3].attr.z = 0;
-    block_info_list[3].diffuse_color = glm::vec3(0, 1, 0);
-    block_info_list[3].reflect_color = glm::vec3(0, 0, 0);
-    block_info_list[4].attr.x = 0.3; //shiny copper block
-    block_info_list[4].attr.y = 0;
-    block_info_list[4].attr.z = 0;
-    block_info_list[4].diffuse_color = glm::vec3(0.98, 0.82, 0.76);
-    block_info_list[4].reflect_color = glm::vec3(0.98, 0.82, 0.76);
-    block_info_list[5].attr.x = 0.1; //mirror block
-    block_info_list[5].attr.y = 0;
-    block_info_list[5].attr.z = 0;
-    block_info_list[5].diffuse_color = glm::vec3(0, 0, 0);
-    block_info_list[5].reflect_color = glm::vec3(0.31, 0.31, 0.31);
-    block_info_list[6].attr.x = 1; //white light block
-    block_info_list[6].attr.y = 1;
-    block_info_list[6].attr.z = 1;
-    block_info_list[6].diffuse_color = glm::vec3(3.14, 3.14, 3.14);
-    block_info_list[6].reflect_color = glm::vec3(0, 0, 0);
-
-    for (int u = 0; u < 16; ++u) {
-        for (int v = 0; v < 16; ++v) {
-            for (int w = 0; w < 16; ++w) {
-                test_section_group_map.section_map[u][v][w] = u + v*16 + w*256;
-                test_section_group[u + v*16 + w*256].start_pos_x = u<<4;
-                test_section_group[u + v*16 + w*256].start_pos_y = v<<4;
-                test_section_group[u + v*16 + w*256].start_pos_z = w<<4;
-                for (int x = 0; x < 16; ++x) {
-                    for (int y = 0; y < 16; ++y) {
-                        for (int z = 0; z < 16; ++z) {
-                            test_section_group[u + v*16 + w*256].blocks[x][y][z].block_id = 0;
-                            test_section_group[u + v*16 + w*256].blocks[x][y][z].status = 0;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    for (int x = 0; x < 7; ++x) {
-        for (int y = 0; y < 7; ++y) {
-            test_section_group[test_section_group_map.section_map[0][0][0]].blocks[x][y][0].block_id = 1;
-        }
-    }
-    for (int x = 0; x < 7; ++x) {
-        for (int y = 0; y < 7; ++y) {
-            test_section_group[test_section_group_map.section_map[0][0][0]].blocks[x][y][7].block_id = 6;
-        }
-    }
-    for (int x = 0; x < 7; ++x) {
-        for (int z = 0; z < 7; ++z) {
-            test_section_group[test_section_group_map.section_map[0][0][0]].blocks[x][0][z].block_id = 3;
-        }
-    }
-    for (int x = 0; x < 7; ++x) {
-        for (int z = 0; z < 7; ++z) {
-            test_section_group[test_section_group_map.section_map[0][0][0]].blocks[x][7][z].block_id = 4;
-        }
-    }
-    for (int y = 0; y < 7; ++y) {
-        for (int z = 0; z < 7; ++z) {
-            test_section_group[test_section_group_map.section_map[0][0][0]].blocks[0][y][z].block_id = 1;
-        }
-    }
-    for (int y = 0; y < 7; ++y) {
-        for (int z = 0; z < 7; ++z) {
-            test_section_group[test_section_group_map.section_map[0][0][0]].blocks[7][y][z].block_id = 1;
-        }
-    }
-
-/*
-    test_section_group[test_section_group_map.section_map[15][15][15]].blocks[15][15][15].block_id = 1;
-
-    for (int x = 0; x < 2; ++x) {
-        for (int y = 0; y < 2; ++y) {
-            for (int z = 0; z < 2; ++z) {
-                test_section_group[test_section_group_map.section_map[x][y][z]].blocks[0][0][0].block_id = 1;
-                test_section_group[test_section_group_map.section_map[x][y][z]].blocks[2][0][0].block_id = 1;
-                test_section_group[test_section_group_map.section_map[x][y][z]].blocks[0][2][0].block_id = 1;
-                test_section_group[test_section_group_map.section_map[x][y][z]].blocks[2][2][0].block_id = 1;
-                test_section_group[test_section_group_map.section_map[x][y][z]].blocks[1][1][1].block_id = 6;
-                test_section_group[test_section_group_map.section_map[x][y][z]].blocks[0][0][2].block_id = 1;
-                test_section_group[test_section_group_map.section_map[x][y][z]].blocks[2][0][2].block_id = 1;
-                test_section_group[test_section_group_map.section_map[x][y][z]].blocks[0][2][2].block_id = 1;
-                test_section_group[test_section_group_map.section_map[x][y][z]].blocks[2][2][2].block_id = 1;
-            }
-        }
-    }
-*/
-/*
-    test_section_group[test_section_group_map.section_map[0][0][0]].blocks[0][0][0].block_id = 1;
-    test_section_group[test_section_group_map.section_map[0][0][0]].blocks[1][0][0].block_id = 1;
-    test_section_group[test_section_group_map.section_map[0][0][0]].blocks[0][1][0].block_id = 1;
-    test_section_group[test_section_group_map.section_map[0][0][0]].blocks[1][1][0].block_id = 1;
-    test_section_group[test_section_group_map.section_map[0][0][0]].blocks[0][0][1].block_id = 1;
-    test_section_group[test_section_group_map.section_map[0][0][0]].blocks[1][0][1].block_id = 1;
-    test_section_group[test_section_group_map.section_map[0][0][0]].blocks[0][1][1].block_id = 1;
-    test_section_group[test_section_group_map.section_map[0][0][0]].blocks[1][1][1].block_id = 1;
-*/
     glGenBuffers(1, &camera_ssbo); //compute
     glGenBuffers(1, &section_group_ssbo);
     glGenBuffers(1, &section_group_map_ssbo);
@@ -242,7 +130,7 @@ void shader_create() {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, section_octree_ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(octree)*4096, NULL, GL_DYNAMIC_COPY);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, block_info_list_ssbo);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(block_info)*BLOCK_NUM, block_info_list, GL_DYNAMIC_COPY);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(block_info)*BLOCK_NUM, block_info_list_get(), GL_DYNAMIC_COPY);
     
     glGenTextures(1, &output_image);
     glBindTexture(GL_TEXTURE_2D, output_image);
@@ -346,7 +234,7 @@ void shader_create() {
     glDeleteShader(display_vertex_shader);
     glDeleteShader(display_fragment_shader);
 
-    section_group_udpate(test_section_group, &test_section_group_map);
+    section_group_udpate(section_group_get(), section_group_map_get());
     octree_update();
 }
 

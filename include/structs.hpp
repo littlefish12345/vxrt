@@ -8,7 +8,9 @@ struct block {
 };
 
 struct block_info {
-    glm::vec3 attr; //roughness k glow
+    float roughness;
+    float k;
+    float brightness;
     float _pad1;
     glm::vec3 diffuse_color;
     float _pad2;
@@ -21,6 +23,8 @@ struct section {
     unsigned int start_pos_y;
     unsigned int start_pos_z;
     block blocks[16][16][16];
+    unsigned int light_source_num;
+    glm::uvec3 light_pos[4096];
 };
 
 struct octree_node {
