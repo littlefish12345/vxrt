@@ -148,7 +148,7 @@ void shader_create() {
     block_info_list[6].attr.x = 1; //white light block
     block_info_list[6].attr.y = 1;
     block_info_list[6].attr.z = 1;
-    block_info_list[6].diffuse_color = glm::vec3(1, 1, 1);
+    block_info_list[6].diffuse_color = glm::vec3(3.14, 3.14, 3.14);
     block_info_list[6].reflect_color = glm::vec3(0, 0, 0);
 
     for (int u = 0; u < 16; ++u) {

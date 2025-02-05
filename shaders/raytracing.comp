@@ -691,7 +691,7 @@ float ggx_distribution(vec3 wh, vec3 normal, float roughness) {
 
 float schlick_ggx(ray in_ray, ray out_ray, vec3 normal, float roughness) {
     float k = pow(roughness + 1, 2) / 8;
-    float gv = dot(normal, in_ray.dir) / (dot(normal, in_ray.dir) * (1 - k) + k);
+    float gv = (-dot(normal, in_ray.dir)) / ((-dot(normal, in_ray.dir)) * (1 - k) + k);
     float gi = dot(normal, out_ray.dir) / (dot(normal, out_ray.dir) * (1 - k) + k);
     return gv * gi;
 }
@@ -740,9 +740,6 @@ void main() {
     lcg_seed = pcg3d(uvec3(pixel_id+now_camera.seed, pixel_id+now_camera.seed, pixel_id+now_camera.seed)).x;
     ivec2 pixel_xy = ivec2(gl_GlobalInvocationID.xy);
     vec3 color = trace(generate_ray());
-    color.x = isinf(color.x) || isnan(color.x) ? 0 : color.x;
-    color.y = isinf(color.y) || isnan(color.y) ? 0 : color.y;
-    color.z = isinf(color.z) || isnan(color.z) ? 0 : color.z;
     color.x = color.x > 1 ? 8 : color.x;
     color.y = color.y > 1 ? 8 : color.y;
     color.z = color.z > 1 ? 8 : color.z;
@@ -750,7 +747,6 @@ void main() {
         imageStore(output_image, pixel_xy, vec4(color, 1.0f));
     } else {
         vec4 last_color = imageLoad(output_image, pixel_xy);
-        imageStore(output_image, pixel_xy, vec4(color, 1.0f)/now_camera.fixed_frame_count + last_color*(now_camera.fixed_frame_count-1)/now_camera.fixed_frame_count);
+        imageStore(output_image, pixel_xy, vec4(color, 1.0f)/now_camera.fixed_frame_count + vec4(last_color.xyz, 1.0f)*(now_camera.fixed_frame_count-1)/float(now_camera.fixed_frame_count));
     }
-    //imageStore(output_image, pixel_xy, vec4(block_info_list[1].diffuse_color, 1.0f));
 }
