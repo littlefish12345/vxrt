@@ -32,7 +32,7 @@ void block_info_list_init() {
     global_block_info_list[5].reflect_color = glm::vec3(0.31, 0.31, 0.31);
     global_block_info_list[6].roughness = 1; //white light block
     global_block_info_list[6].k = 1;
-    global_block_info_list[6].brightness = 3;
+    global_block_info_list[6].brightness = 1;
     global_block_info_list[6].diffuse_color = glm::vec3(1, 1, 1);
     global_block_info_list[6].reflect_color = glm::vec3(0, 0, 0);
 }

@@ -7,7 +7,10 @@
 #define PI 3.1415926535
 
 #define OCTREE_SIZE 4681 //16*16*16+8*8*8+4*4*4+2*2*2+1
-#define MAX_TRACK_DEPTH 8
+#define MAX_TRACK_DEPTH 4
+#define DIRECT_LIGHT_SAMPLE_RANGE 1
+#define DIRECT_LIGHT_SAMPLE_NUM 1 //DIRECT_LIGHT_SAMPLE_RANGE^3
+#define DIRECT_LIGHT_SAMPLE_FAILURE 65536
 
 struct block {
     uint block_id;
@@ -83,6 +86,13 @@ struct ray_hit_result {
     uint block_status;
 };
 
+struct direct_lighting_result {
+    bool success;
+    ray sample_ray;
+    vec3 sample_point;
+    vec3 result_color;
+};
+
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(std430, binding = 0) buffer camera_buffer {
@@ -130,7 +140,7 @@ uvec3 pcg3d(uvec3 v) {
 }
 
 uint lcg(uint seed) {
-    return (seed * LCG_A + LCG_C) % LCG_M;
+    return (seed * LCG_A) & 0x7FFFFFFF;
 }
 
 float rand_01() {
@@ -228,8 +238,10 @@ ray generate_ray() {
     ray temp_ray;
     float half_plane_width = tan(radians(now_camera.fov));
     float half_plane_height = half_plane_width / now_camera.aspect_ratio;
-    vec3 ray_right = half_plane_width * ((gl_GlobalInvocationID.x / float(now_camera.width_height.x-1)) * 2 - 1) * now_camera.right;
-    vec3 ray_up = half_plane_height * ((gl_GlobalInvocationID.y / float(now_camera.width_height.y-1)) * 2 - 1) * now_camera.coord_up;
+    float rand_x_bias = 0.5 * rand_11();
+    float rand_y_bias = 0.5 * rand_11();
+    vec3 ray_right = half_plane_width * (((float(gl_GlobalInvocationID.x) + rand_x_bias) / float(now_camera.width_height.x-1)) * 2 - 1) * now_camera.right;
+    vec3 ray_up = half_plane_height * (((float(gl_GlobalInvocationID.y) + rand_y_bias) / float(now_camera.width_height.y-1)) * 2 - 1) * now_camera.coord_up;
     temp_ray.dir = now_camera.front + ray_right + ray_up;
     temp_ray.pos = now_camera.pos + temp_ray.dir * 0.05f;
     temp_ray.dir = normalize(temp_ray.dir);
@@ -262,7 +274,7 @@ ray_hit_result ray_hit_node(ray now_ray, vec3 min_coord, uint width) {
             point_on_plane = now_ray.pos + t * now_ray.dir;
             if (min_coord.y < point_on_plane.y && max_coord.y > point_on_plane.y && min_coord.z < point_on_plane.z && max_coord.z > point_on_plane.z) {
                 result.dist = t;
-                result.hit_pos = point_on_plane;
+                result.hit_pos = point_on_plane + result.plain_normal * 0.01f;
                 return result;
             }
         }
@@ -282,7 +294,7 @@ ray_hit_result ray_hit_node(ray now_ray, vec3 min_coord, uint width) {
             point_on_plane = now_ray.pos + t * now_ray.dir;
             if (min_coord.z < point_on_plane.z && max_coord.z > point_on_plane.z && min_coord.x < point_on_plane.x && max_coord.x > point_on_plane.x) {
                 result.dist = t;
-                result.hit_pos = point_on_plane;
+                result.hit_pos = point_on_plane + result.plain_normal * 0.01f;
                 return result;
             }
         }
@@ -302,7 +314,7 @@ ray_hit_result ray_hit_node(ray now_ray, vec3 min_coord, uint width) {
             point_on_plane = now_ray.pos + t * now_ray.dir;
             if (min_coord.x < point_on_plane.x && max_coord.x > point_on_plane.x && min_coord.y < point_on_plane.y && max_coord.y > point_on_plane.y) {
                 result.dist = t;
-                result.hit_pos = point_on_plane;
+                result.hit_pos = point_on_plane + result.plain_normal * 0.01f;
                 return result;
             }
         }
@@ -686,8 +698,55 @@ ray_hit_result ray_hit_center_octree(ray now_ray) {
     return result;
 }
 
-vec3 lambert(uint block_id) {
-    return block_info_list[block_id].diffuse_color / PI;
+uvec4 direct_light_source_pick(uvec3 section_pos) { //light pos/section index
+    uvec4 result;
+    uvec3 search_list[DIRECT_LIGHT_SAMPLE_NUM];
+    uint search_list_count = 0;
+    ivec3 now_section_pos = ivec3(section_pos);
+    result.w = DIRECT_LIGHT_SAMPLE_FAILURE;
+    for (int x = -1; x < ((DIRECT_LIGHT_SAMPLE_NUM-1)>>1); ++x) {
+        for (int y = -1; y < ((DIRECT_LIGHT_SAMPLE_NUM-1)>>1); ++y) {
+            for (int z = -1; z < ((DIRECT_LIGHT_SAMPLE_NUM-1)>>1); ++z) {
+                if (now_section_pos.x + x < 16 && now_section_pos.x + x > -1 && now_section_pos.y + y < 16 && now_section_pos.y + y > -1 && now_section_pos.z + z < 16 && now_section_pos.z + z > -1) {
+                    search_list[search_list_count] = uvec3(section_pos.x + x, section_pos.z + z, section_pos.z + z);
+                    if (section_group[group_map_data.section_map[search_list[search_list_count].x][search_list[search_list_count].y][search_list[search_list_count].z]].light_source_num != 0) {
+                        ++search_list_count;
+                    }
+                }
+            }
+        }
+    }
+    if (search_list_count == 0) {
+        return result;
+    }
+    uint random_section_index = uint(floor(rand_01() * float(search_list_count)));
+    result.w = group_map_data.section_map[search_list[random_section_index].x][search_list[random_section_index].y][search_list[random_section_index].z];
+    uint random_light_index = uint(floor(rand_01() * float(section_group[result.w].light_source_num)));
+    result.xyz = section_group[result.w].light_pos[random_light_index];
+    return result;
+}
+
+direct_lighting_result direct_light_sample(ray_hit_result result) {
+    direct_lighting_result lighting_result;
+    lighting_result.success = false;
+    uvec4 sample_result = direct_light_source_pick(result.section_pos);
+    if (sample_result.w == DIRECT_LIGHT_SAMPLE_FAILURE) {
+        return lighting_result;
+    }
+    lighting_result.sample_point = sample_result.xyz + vec3(rand_01(), rand_01(), rand_01());
+    lighting_result.sample_ray.pos = result.hit_pos;
+    lighting_result.sample_ray.dir = normalize(lighting_result.sample_point - result.hit_pos);
+    ray_hit_result check_result = ray_hit_center_octree(lighting_result.sample_ray);
+    if (check_result.block_pos != sample_result.xyz) {
+        return lighting_result;
+    }
+    lighting_result.result_color = block_info_list[section_group[sample_result.w].blocks[sample_result.x][sample_result.y][sample_result.z].block_id].diffuse_color;
+    lighting_result.result_color *= block_info_list[section_group[sample_result.w].blocks[sample_result.x][sample_result.y][sample_result.z].block_id].brightness;
+    return lighting_result;
+}
+
+vec3 lambert(ray_hit_result result, ray out_ray) {
+    return block_info_list[result.block_id].diffuse_color / PI;
 }
 
 float ggx_distribution(vec3 wh, vec3 normal, float roughness) {
@@ -713,10 +772,16 @@ vec3 cook_torrance(ray_hit_result result, ray in_ray, ray out_ray) {
     return fr * d * g / (4 * dot(result.plain_normal, in_ray.dir), dot(result.plain_normal, out_ray.dir));
 }
 
+vec3 brdf(ray_hit_result result, ray now_ray, ray new_ray) {
+    return ((1 - block_info_list[result.block_id].k) * cook_torrance(result, now_ray, new_ray)) + (block_info_list[result.block_id].k * lambert(result, new_ray));
+}
+
 vec3 trace(ray now_ray) {
     ray_hit_result result;
+    direct_lighting_result lighting_result;
     uint track_depth = 0;
-    vec3 brdf = vec3(1, 1, 1);
+    vec3 color = vec3(0, 0, 0);
+    vec3 decay_factor = vec3(1, 1, 1);
     vec3 in_out_normal;
     ray new_ray;
     while (track_depth < MAX_TRACK_DEPTH) {
@@ -725,24 +790,29 @@ vec3 trace(ray now_ray) {
             result.block_id = section_group[group_map_data.section_map[result.section_index.x][result.section_index.y][result.section_index.z]].blocks[result.block_index.x][result.block_index.y][result.block_index.z].block_id;
             result.block_status = section_group[group_map_data.section_map[result.section_index.x][result.section_index.y][result.section_index.z]].blocks[result.block_index.x][result.block_index.y][result.block_index.z].status;
             if (block_info_list[result.block_id].brightness != 0) {
-                return brdf * block_info_list[result.block_id].diffuse_color * block_info_list[result.block_id].brightness;
+                return decay_factor * block_info_list[result.block_id].diffuse_color * block_info_list[result.block_id].brightness + color;
             }
-            new_ray.pos = result.hit_pos + result.plain_normal * 0.01f;
+            new_ray.pos = result.hit_pos;
             new_ray.dir = sample_half_sphere(result.plain_normal);
-            brdf *= ((1 - block_info_list[result.block_id].k) * cook_torrance(result, now_ray, new_ray)) + (block_info_list[result.block_id].k * lambert(result.block_id));
+            //lighting_result = direct_light_sample(result);
+            //if (lighting_result.success) {
+            //    direct_light_color += decay_factor * (((1 - block_info_list[result.block_id].k) * cook_torrance(result, now_ray, lighting_result.sample_ray)) + (block_info_list[result.block_id].k * lambert(result, lighting_result.sample_ray))) * lighting_result.result_color / 2;
+            //    decay_factor /= 2;
+            //}
+            decay_factor *=  brdf(result, now_ray, new_ray) * 2 * PI;
             now_ray = new_ray;
         } else {
-            return vec3(0, 0, 0);
+            return color;
         }
         ++track_depth;
     }
-
-    return vec3(0, 0, 0);
+    return color;
 }
 
 void main() {
     uint pixel_id = gl_GlobalInvocationID.y*now_camera.width_height.x + gl_GlobalInvocationID.x;
-    lcg_seed = pcg3d(uvec3(pixel_id+now_camera.seed, pixel_id+now_camera.seed, pixel_id+now_camera.seed)).x;
+    uvec3 hash_result = pcg3d(uvec3(pixel_id, now_camera.seed, 114514));
+    lcg_seed = (hash_result.x + hash_result.y + hash_result.z) & 0x7FFFFFFF;
     ivec2 pixel_xy = ivec2(gl_GlobalInvocationID.xy);
     vec3 color = trace(generate_ray());
     color.x = color.x > 1 ? 8 : color.x;
