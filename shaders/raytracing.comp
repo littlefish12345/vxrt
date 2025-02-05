@@ -799,7 +799,7 @@ vec3 trace(ray now_ray) {
             //    direct_light_color += decay_factor * (((1 - block_info_list[result.block_id].k) * cook_torrance(result, now_ray, lighting_result.sample_ray)) + (block_info_list[result.block_id].k * lambert(result, lighting_result.sample_ray))) * lighting_result.result_color / 2;
             //    decay_factor /= 2;
             //}
-            decay_factor *=  brdf(result, now_ray, new_ray) * 2 * PI;
+            decay_factor *=  brdf(result, now_ray, new_ray) * abs(dot(result.plain_normal, new_ray.dir)) * 2 * PI;
             now_ray = new_ray;
         } else {
             return color;
@@ -815,9 +815,6 @@ void main() {
     lcg_seed = (hash_result.x + hash_result.y + hash_result.z) & 0x7FFFFFFF;
     ivec2 pixel_xy = ivec2(gl_GlobalInvocationID.xy);
     vec3 color = trace(generate_ray());
-    color.x = color.x > 1 ? 8 : color.x;
-    color.y = color.y > 1 ? 8 : color.y;
-    color.z = color.z > 1 ? 8 : color.z;
     if (now_camera.fixed_frame_count == 1) {
         imageStore(output_image, pixel_xy, vec4(color, 1.0f));
     } else {

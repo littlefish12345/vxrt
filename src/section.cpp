@@ -72,7 +72,7 @@ void build_test_box() {
     }
     for (int x = 0; x < 7; ++x) {
         for (int z = 0; z < 7; ++z) {
-            global_section_group[0].blocks[x][6][z].block_id = 4;
+            global_section_group[0].blocks[x][6][z].block_id = 5;
         }
     }
     for (int y = 0; y < 7; ++y) {
@@ -85,10 +85,14 @@ void build_test_box() {
             global_section_group[0].blocks[6][y][z].block_id = 1;
         }
     }
+    /*
     for (int x = 2; x < 5; ++x) {
         for (int y = 2; y < 5; ++y) {
             global_section_group[0].blocks[x][y][6].block_id = 6;
         }
     }
+    */
+   global_section_group[0].blocks[2][2][1].block_id = 6;
+   global_section_group[0].blocks[3][3][1].block_id = 2;
     section_update_light_source(0);
 }
