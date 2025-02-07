@@ -160,6 +160,49 @@ vec3 sample_sphere() {
     return vec3(sin(theta)*cos(phi), sin(theta)*sin(phi), cos(theta));
 }
 
+/*
+  6  7
+4  5
+  2  3
+0  1
+
+z^ ^y
+ |/_>x
+*/
+
+/*
+x, y, z
+y, -x, z
+
+xy -xy +z^2
+*/
+
+vec3 sample_cosine_weighted(vec3 normal, uint plain_index) {
+    vec3 right;
+    vec3 front;
+    switch (plain_index) {
+        case 0: //-x
+        case 1: //+x
+            right = vec3(0, 1, 0);
+            front = vec3(0, 0, 1);
+            break;
+        case 2: //-y
+        case 3: //+y
+            right = vec3(1, 0, 0);
+            front = vec3(0, 0, 1);
+            break;
+        case 4: //-z
+        case 5: //+z
+            right = vec3(1, 0, 0);
+            front = vec3(0, 1, 0);
+            break;
+    }
+    float theta = rand_01() * 2 * PI;
+    float r = sqrt(rand_01());
+    float z = rand_01();
+    return normalize(r*sin(theta)*right + r*cos(theta)*front + z*normal);
+}
+
 vec3 sample_half_sphere(vec3 normal) {
     vec3 dir = sample_sphere();
     if (dot(dir, normal) < 0) {
@@ -812,8 +855,19 @@ vec3 brdf(ray_hit_result result, ray now_ray, ray new_ray) {
     return ((fr * cook_torrance(result, now_ray, new_ray, wh, fr)) + (kd * lambert(result, new_ray))) * abs(dot(result.plain_normal, new_ray.dir));
 }
 
+vec3 cosing_weighted_brdf(ray_hit_result result, ray now_ray, ray new_ray) {
+    vec3 wh = normalize(new_ray.dir - now_ray.dir);
+    vec3 fr = schlick_fresnel(new_ray.dir, wh, block_info_list[result.block_id].reflect_color);
+    vec3 kd = vec3(1, 1, 1) - fr;
+    return ((fr * cook_torrance(result, now_ray, new_ray, wh, fr)) + (kd * lambert(result, new_ray)));
+}
+
 float sphere_uniform_sampling_pdf_inv() {
     return 2 * PI;
+}
+
+float cosine_weighted_sampling_pdf_inv() {
+    return PI;
 }
 
 float direct_lighting_sampling_pdf_inv(ray_hit_result result, direct_lighting_result lighting_result) {
@@ -850,8 +904,8 @@ vec3 trace(ray now_ray) {
                 }
             }
             new_ray.pos = result.hit_pos;
-            new_ray.dir = sample_half_sphere(result.plain_normal);
-            decay_factor *= brdf(result, now_ray, new_ray) / sphere_uniform_sampling_pdf_inv();
+            new_ray.dir = sample_cosine_weighted(result.plain_normal, result.plain_index);
+            decay_factor *= cosing_weighted_brdf(result, now_ray, new_ray) / cosine_weighted_sampling_pdf_inv();
             now_ray = new_ray;
         } else {
             return color;
