@@ -160,23 +160,6 @@ vec3 sample_sphere() {
     return vec3(sin(theta)*cos(phi), sin(theta)*sin(phi), cos(theta));
 }
 
-/*
-  6  7
-4  5
-  2  3
-0  1
-
-z^ ^y
- |/_>x
-*/
-
-/*
-x, y, z
-y, -x, z
-
-xy -xy +z^2
-*/
-
 vec3 sample_cosine_weighted(vec3 normal, uint plain_index) {
     vec3 right;
     vec3 front;
@@ -368,16 +351,6 @@ ray_hit_result ray_hit_node(ray now_ray, vec3 min_coord, uint width) {
     result.hit = false;
     return result;
 }
-
-/*
-  6  7
-4  5
-  2  3
-0  1
-
-z^ ^y
- |/_>x
-*/
 
 uint [8]get_dfs_order(ray now_ray, vec3 min_coord, uint width) {
     vec3 max_coord = min_coord + (1<<width);
