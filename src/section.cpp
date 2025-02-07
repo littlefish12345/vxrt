@@ -22,7 +22,7 @@ void section_group_init() {
                         for (int z = 0; z < 16; ++z) {
                             global_section_group[u + v*16 + w*256].blocks[x][y][z].block_id = 0;
                             global_section_group[u + v*16 + w*256].blocks[x][y][z].status = 0;
-                            global_section_group[u + v*16 + w*256].light_pos[x + y*16 + z*256] = glm::uvec3(0, 0, 0);
+                            global_section_group[u + v*16 + w*256].light_pos[x + y*16 + z*256] = glm::uvec4(0, 0, 0, 0);
                         }
                     }
                 }
@@ -38,7 +38,7 @@ void section_update_light_source(unsigned int index) {
         for (int y = 0; y < 16; ++y) {
             for (int z = 0; z < 16; ++z) {
                 if (block_info_get(global_section_group[index].blocks[x][y][z].block_id).brightness != 0) {
-                    global_section_group[index].light_pos[global_section_group[index].light_source_num] = glm::uvec3(x, y, z);
+                    global_section_group[index].light_pos[global_section_group[index].light_source_num] = glm::uvec4(x, y, z, 0);
                     ++global_section_group[index].light_source_num;
                 }
             }
@@ -65,24 +65,26 @@ void build_test_box() {
             global_section_group[0].blocks[x][y][6].block_id = 1;
         }
     }
+    /*
     for (int x = 0; x < 7; ++x) {
         for (int z = 0; z < 7; ++z) {
-            global_section_group[0].blocks[x][0][z].block_id = 3;
+            global_section_group[0].blocks[x][0][z].block_id = 1;
         }
     }
+    */
     for (int x = 0; x < 7; ++x) {
         for (int z = 0; z < 7; ++z) {
-            global_section_group[0].blocks[x][6][z].block_id = 5;
+            global_section_group[0].blocks[x][6][z].block_id = 1;
         }
     }
     for (int y = 0; y < 7; ++y) {
         for (int z = 0; z < 7; ++z) {
-            global_section_group[0].blocks[0][y][z].block_id = 1;
+            global_section_group[0].blocks[0][y][z].block_id = 3;
         }
     }
     for (int y = 0; y < 7; ++y) {
         for (int z = 0; z < 7; ++z) {
-            global_section_group[0].blocks[6][y][z].block_id = 1;
+            global_section_group[0].blocks[6][y][z].block_id = 2;
         }
     }
     /*
@@ -92,7 +94,9 @@ void build_test_box() {
         }
     }
     */
-   global_section_group[0].blocks[2][2][1].block_id = 6;
-   global_section_group[0].blocks[3][3][1].block_id = 2;
+    global_section_group[0].blocks[3][3][5].block_id = 6;
+    global_section_group[0].blocks[2][4][1].block_id = 1;
+    global_section_group[0].blocks[2][4][2].block_id = 1;
+    global_section_group[0].blocks[4][3][1].block_id = 1;
     section_update_light_source(0);
 }

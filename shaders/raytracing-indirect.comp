@@ -8,7 +8,6 @@
 
 #define OCTREE_SIZE 4681 //16*16*16+8*8*8+4*4*4+2*2*2+1
 #define MAX_TRACK_DEPTH 4
-#define ROULETTE_UPPER_BOUND 0.7
 #define DIRECT_LIGHT_SAMPLE_RANGE 1
 #define DIRECT_LIGHT_SAMPLE_NUM 1 //DIRECT_LIGHT_SAMPLE_RANGE^3
 #define DIRECT_LIGHT_SAMPLE_FAILURE 65536
@@ -91,7 +90,6 @@ struct direct_lighting_result {
     bool success;
     ray sample_ray;
     vec3 sample_point;
-    vec3 sample_normal;
     vec3 result_color;
 };
 
@@ -706,9 +704,9 @@ uvec4 direct_light_source_pick(uvec3 section_pos) { //light pos/section index
     uint search_list_count = 0;
     ivec3 now_section_pos = ivec3(section_pos);
     result.w = DIRECT_LIGHT_SAMPLE_FAILURE;
-    for (int x = -(DIRECT_LIGHT_SAMPLE_RANGE>>1); x <= (DIRECT_LIGHT_SAMPLE_RANGE>>1); ++x) {
-        for (int y = -(DIRECT_LIGHT_SAMPLE_RANGE>>1); y <= (DIRECT_LIGHT_SAMPLE_RANGE>>1); ++y) {
-            for (int z = -(DIRECT_LIGHT_SAMPLE_RANGE>>1); z <= (DIRECT_LIGHT_SAMPLE_RANGE>>1); ++z) {
+    for (int x = -1; x < ((DIRECT_LIGHT_SAMPLE_NUM-1)>>1); ++x) {
+        for (int y = -1; y < ((DIRECT_LIGHT_SAMPLE_NUM-1)>>1); ++y) {
+            for (int z = -1; z < ((DIRECT_LIGHT_SAMPLE_NUM-1)>>1); ++z) {
                 if (now_section_pos.x + x < 16 && now_section_pos.x + x > -1 && now_section_pos.y + y < 16 && now_section_pos.y + y > -1 && now_section_pos.z + z < 16 && now_section_pos.z + z > -1) {
                     search_list[search_list_count] = uvec3(section_pos.x + x, section_pos.z + z, section_pos.z + z);
                     if (section_group[group_map_data.section_map[search_list[search_list_count].x][search_list[search_list_count].y][search_list[search_list_count].z]].light_source_num != 0) {
@@ -728,33 +726,6 @@ uvec4 direct_light_source_pick(uvec3 section_pos) { //light pos/section index
     return result;
 }
 
-vec4 direct_light_random_surface_pos(vec3 sample_result_pos, vec3 hit_pos) { //sample_pos/plain_index
-    uint plain_index = uint(floor(6 * rand_01()));
-    float rand1 = rand_01();
-    float rand2 = rand_01();
-    switch (plain_index) {
-        case 0: //-x
-            sample_result_pos += vec3(0, rand1, rand2);
-            break;
-        case 1: //+x
-            sample_result_pos += vec3(1, rand1, rand2);
-            break;
-        case 2: //-y
-            sample_result_pos += vec3(rand1, 0, rand2);
-            break;
-        case 3: //+y
-            sample_result_pos += vec3(rand1, 1, rand2);
-            break;
-        case 4: //-z
-            sample_result_pos += vec3(rand1, rand2, 0);
-            break;
-        case 5: //+z
-            sample_result_pos += vec3(rand1, rand2, 1);
-            break;
-    } 
-    return vec4(sample_result_pos, plain_index);
-}
-
 direct_lighting_result direct_light_sample(ray_hit_result result) {
     direct_lighting_result lighting_result;
     lighting_result.success = false;
@@ -762,19 +733,13 @@ direct_lighting_result direct_light_sample(ray_hit_result result) {
     if (sample_result.w == DIRECT_LIGHT_SAMPLE_FAILURE) {
         return lighting_result;
     }
-    vec4 random_sample = direct_light_random_surface_pos(sample_result.xyz, result.hit_pos);
-    lighting_result.sample_point = random_sample.xyz;
+    lighting_result.sample_point = sample_result.xyz + vec3(rand_01(), rand_01(), rand_01());
     lighting_result.sample_ray.pos = result.hit_pos;
     lighting_result.sample_ray.dir = normalize(lighting_result.sample_point - result.hit_pos);
     ray_hit_result check_result = ray_hit_center_octree(lighting_result.sample_ray);
-    if (!check_result.hit || random_sample.w != check_result.plain_index || check_result.block_pos != sample_result.xyz) {
+    if (check_result.block_pos != sample_result.xyz) {
         return lighting_result;
     }
-    if (dot(lighting_result.sample_ray.dir, check_result.plain_normal) > 0.01) {
-        return lighting_result;
-    }
-    lighting_result.success = true;
-    lighting_result.sample_normal = check_result.plain_normal;
     lighting_result.result_color = block_info_list[section_group[sample_result.w].blocks[sample_result.x][sample_result.y][sample_result.z].block_id].diffuse_color;
     lighting_result.result_color *= block_info_list[section_group[sample_result.w].blocks[sample_result.x][sample_result.y][sample_result.z].block_id].brightness;
     return lighting_result;
@@ -812,46 +777,30 @@ vec3 brdf(ray_hit_result result, ray now_ray, ray new_ray) {
     return ((fr * cook_torrance(result, now_ray, new_ray, wh, fr)) + (kd * lambert(result, new_ray))) * abs(dot(result.plain_normal, new_ray.dir));
 }
 
-float sphere_uniform_sampling_pdf_inv() {
-    return 2 * PI;
-}
-
-float direct_lighting_sampling_pdf_inv(ray_hit_result result, direct_lighting_result lighting_result) {
-    vec3 dir = lighting_result.sample_point - result.hit_pos;
-    float dist_sqr = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
-    return abs(dot(lighting_result.sample_ray.dir, lighting_result.sample_normal) / dist_sqr);
-}
-
 vec3 trace(ray now_ray) {
     ray_hit_result result;
     direct_lighting_result lighting_result;
     uint track_depth = 0;
-    float roulette;
     vec3 color = vec3(0, 0, 0);
     vec3 decay_factor = vec3(1, 1, 1);
     vec3 in_out_normal;
     ray new_ray;
     while (track_depth < MAX_TRACK_DEPTH) {
-        roulette = rand_01();
-        if (roulette > ROULETTE_UPPER_BOUND) {
-            return color;
-        }
-        decay_factor /= roulette;
         result = ray_hit_center_octree(now_ray);
         if (result.hit) {
             result.block_id = section_group[group_map_data.section_map[result.section_index.x][result.section_index.y][result.section_index.z]].blocks[result.block_index.x][result.block_index.y][result.block_index.z].block_id;
             result.block_status = section_group[group_map_data.section_map[result.section_index.x][result.section_index.y][result.section_index.z]].blocks[result.block_index.x][result.block_index.y][result.block_index.z].status;
-            if (track_depth == 0 && block_info_list[result.block_id].brightness != 0) {
-                color += block_info_list[result.block_id].brightness * block_info_list[result.block_id].diffuse_color;
-            } else {
-                lighting_result = direct_light_sample(result);
-                if (lighting_result.success) {
-                    color += decay_factor * brdf(result, now_ray, lighting_result.sample_ray) * lighting_result.result_color * direct_lighting_sampling_pdf_inv(result, lighting_result);
-                }
+            if (block_info_list[result.block_id].brightness != 0) {
+                return decay_factor * block_info_list[result.block_id].diffuse_color * block_info_list[result.block_id].brightness + color;
             }
             new_ray.pos = result.hit_pos;
             new_ray.dir = sample_half_sphere(result.plain_normal);
-            decay_factor *= brdf(result, now_ray, new_ray) / sphere_uniform_sampling_pdf_inv();
+            //lighting_result = direct_light_sample(result);
+            //if (lighting_result.success) {
+            //    direct_light_color += decay_factor * (((1 - block_info_list[result.block_id].k) * cook_torrance(result, now_ray, lighting_result.sample_ray)) + (block_info_list[result.block_id].k * lambert(result, lighting_result.sample_ray))) * lighting_result.result_color / 2;
+            //    decay_factor /= 2;
+            //}
+            decay_factor *=  brdf(result, now_ray, new_ray) * 2 * PI;
             now_ray = new_ray;
         } else {
             return color;

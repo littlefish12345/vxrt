@@ -9,13 +9,13 @@ struct block {
 
 struct block_info {
     float roughness;
-    float k;
     float brightness;
     float _pad1;
-    glm::vec3 diffuse_color;
     float _pad2;
-    glm::vec3 reflect_color;
+    glm::vec3 diffuse_color;
     float _pad3;
+    glm::vec3 reflect_color;
+    float _pad4;
 };
 
 struct section {
@@ -24,7 +24,7 @@ struct section {
     unsigned int start_pos_z;
     block blocks[16][16][16];
     unsigned int light_source_num;
-    glm::uvec3 light_pos[4096];
+    glm::uvec4 light_pos[4096];
 };
 
 struct octree_node {
